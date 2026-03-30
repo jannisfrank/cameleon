@@ -290,7 +290,10 @@ impl Expr {
             UnOpKind::Trunc => res.as_float().trunc().into(),
             UnOpKind::Floor => res.as_float().floor().into(),
             UnOpKind::Ceil => res.as_float().ceil().into(),
-            UnOpKind::Round => res.as_float().round().into(),
+            UnOpKind::Round(precision) => {
+                let factor = 10_f64.powi(precision);
+                ((res.as_float() * factor).round() / factor).into()
+            }
         })
     }
 }
@@ -337,7 +340,7 @@ pub enum UnOpKind {
     Trunc,
     Floor,
     Ceil,
-    Round,
+    Round(i32),
 }
 
 #[must_use]
@@ -517,7 +520,20 @@ impl Parser<'_> {
                     "TRUNC" => UnOpKind::Trunc,
                     "FLOOR" => UnOpKind::Floor,
                     "CEIL" => UnOpKind::Ceil,
-                    "ROUND" => UnOpKind::Round,
+                    "ROUND" => {
+                        let expr = self.expr();
+                        let precision = if self.eat(&Token::Comma) {
+                            self.next_integer().unwrap()
+                        } else {
+                            0
+                        };
+
+                        self.expect(&Token::RParen);
+                        return Expr::UnOp {
+                            kind: UnOpKind::Round(precision as i32),
+                            expr: expr.into(),
+                        };
+                    }
                     other => panic!("{} is not a keyword or function name", other),
                 };
                 let expr = self.expr();
@@ -585,6 +601,7 @@ impl Parser<'_> {
 
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
+    Comma,
     LParen,
     RParen,
     Plus,
@@ -645,6 +662,7 @@ impl<'a> Lexer<'a> {
         while self.eat_char(|c| c.is_whitespace() || c.is_ascii_control()) {}
 
         self.peek = Some(match self.next_char()? {
+            ',' => Token::Comma,
             '(' => Token::LParen,
             ')' => Token::RParen,
             '+' => Token::Plus,
@@ -818,6 +836,9 @@ mod tests {
 
     #[test]
     fn test_lexer() {
+        let t = Lexer::new(",123").next().unwrap();
+        assert_eq!(Token::Comma, t);
+
         let t = Lexer::new("&amp;").next().unwrap();
         assert_eq!(Token::And, t);
 
@@ -882,6 +903,11 @@ mod tests {
         test_eval_no_var_impl("(0xff00 | 0xf0f0) = 0xfff0");
         test_eval_no_var_impl("(0xff00 ^ 0xf0f0) = 0x0ff0");
         test_eval_no_var_impl("(~0) = (0 - 1)");
+        test_eval_no_var_impl("ROUND ((1 / 10) + 0.049, 3) = 0.149");
+        test_eval_no_var_impl("ROUND ((1 / 10) + 0.049, 2) = 0.15");
+        test_eval_no_var_impl("ROUND ((1 / 10) + 0.049, 1) = 0.1");
+        test_eval_no_var_impl("ROUND ((1 / 10) + 0.049, 0) = 0");
+        test_eval_no_var_impl("ROUND ((1 / 10) + 0.049) = 0");
     }
 
     #[test]
