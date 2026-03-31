@@ -177,82 +177,80 @@ impl Expr {
     {
         use std::ops::{Add, Mul, Rem, Sub};
 
+        let lhs = self.eval(var_env)?;
+        let rhs = rhs.eval(var_env)?;
+
+        macro_rules! apply_arithmetic_op {
+            ($fint:ident, $ffloat:ident) => {{
+                if lhs.is_integer() && rhs.is_integer() {
+                    (lhs.as_integer().$fint(rhs.as_integer())).0.into()
+                } else {
+                    (lhs.as_float().$ffloat(rhs.as_float())).into()
+                }
+            }};
+        }
+
+        macro_rules! apply_cmp_op {
+            ($fint:ident, $ffloat:ident) => {{
+                if lhs.is_integer() && rhs.is_integer() {
+                    (lhs.as_integer().$fint(&rhs.as_integer())).into()
+                } else {
+                    (lhs.as_float().$ffloat(&rhs.as_float())).into()
+                }
+            }};
+        }
+
         Ok(match op {
-            BinOpKind::And => {
-                (self.eval(var_env)?.as_bool() && rhs.eval(var_env)?.as_bool()).into()
-            }
-            BinOpKind::Or => (self.eval(var_env)?.as_bool() || rhs.eval(var_env)?.as_bool()).into(),
+            BinOpKind::And => (lhs.as_bool() && rhs.as_bool()).into(),
+            BinOpKind::Or => (lhs.as_bool() || rhs.as_bool()).into(),
 
             BinOpKind::Round => {
-                let factor = 10_f64.powi(rhs.eval(var_env)?.as_integer() as i32);
-                ((self.eval(var_env)?.as_float() * factor).round() / factor).into()
+                let factor = match rhs {
+                    EvaluationResult::Integer(0) => return Ok(lhs.as_float().round().into()),
+                    EvaluationResult::Integer(n) => 10_f64.powi(n as i32),
+                    EvaluationResult::Float(f) => 10_f64.powf(f),
+                };
+                ((lhs.as_float() * factor).round() / factor).into()
             }
 
-            _ => {
-                let lhs = self.eval(var_env)?;
-                let rhs = rhs.eval(var_env)?;
-
-                macro_rules! apply_arithmetic_op {
-                    ($fint:ident, $ffloat:ident) => {{
-                        if lhs.is_integer() && rhs.is_integer() {
-                            (lhs.as_integer().$fint(rhs.as_integer())).0.into()
-                        } else {
-                            (lhs.as_float().$ffloat(rhs.as_float())).into()
-                        }
-                    }};
-                }
-
-                macro_rules! apply_cmp_op {
-                    ($fint:ident, $ffloat:ident) => {{
-                        if lhs.is_integer() && rhs.is_integer() {
-                            (lhs.as_integer().$fint(&rhs.as_integer())).into()
-                        } else {
-                            (lhs.as_float().$ffloat(&rhs.as_float())).into()
-                        }
-                    }};
-                }
-                match op {
-                    BinOpKind::Add => apply_arithmetic_op!(overflowing_add, add),
-                    BinOpKind::Sub => apply_arithmetic_op!(overflowing_sub, sub),
-                    BinOpKind::Mul => apply_arithmetic_op!(overflowing_mul, mul),
-                    BinOpKind::Div => {
-                        // Division must be treated as floating points.
-                        // e.g. Converter node with `<FormulaFrom>TO/(1&lt;&lt;P1)</FormulaFrom>` where `P1` points to integer node are commonplace.
-                        (lhs.as_float() / rhs.as_float()).into()
-                    }
-                    BinOpKind::Rem => apply_arithmetic_op!(overflowing_rem, rem),
-                    BinOpKind::Pow => {
-                        if lhs.is_integer() && rhs.is_integer() && rhs.as_integer() >= 0 {
-                            lhs.as_integer()
-                                .overflowing_pow(rhs.as_integer() as u32)
-                                .0
-                                .into()
-                        } else {
-                            lhs.as_float().powf(rhs.as_float()).into()
-                        }
-                    }
-                    BinOpKind::Eq => apply_cmp_op!(eq, eq),
-                    BinOpKind::Ne => apply_cmp_op!(ne, ne),
-                    BinOpKind::Lt => apply_cmp_op!(lt, lt),
-                    BinOpKind::Le => apply_cmp_op!(le, le),
-                    BinOpKind::Gt => apply_cmp_op!(gt, gt),
-                    BinOpKind::Ge => apply_cmp_op!(ge, ge),
-                    BinOpKind::Shl => lhs
-                        .as_integer()
-                        .overflowing_shl(rhs.as_integer() as u32)
+            BinOpKind::Add => apply_arithmetic_op!(overflowing_add, add),
+            BinOpKind::Sub => apply_arithmetic_op!(overflowing_sub, sub),
+            BinOpKind::Mul => apply_arithmetic_op!(overflowing_mul, mul),
+            BinOpKind::Div => {
+                // Division must be treated as floating points.
+                // e.g. Converter node with `<FormulaFrom>TO/(1&lt;&lt;P1)</FormulaFrom>` where `P1` points to integer node are commonplace.
+                (lhs.as_float() / rhs.as_float()).into()
+            }
+            BinOpKind::Rem => apply_arithmetic_op!(overflowing_rem, rem),
+            BinOpKind::Pow => {
+                if lhs.is_integer() && rhs.is_integer() && rhs.as_integer() >= 0 {
+                    lhs.as_integer()
+                        .overflowing_pow(rhs.as_integer() as u32)
                         .0
-                        .into(),
-                    BinOpKind::Shr => lhs
-                        .as_integer()
-                        .overflowing_shr(rhs.as_integer() as u32)
-                        .0
-                        .into(),
-                    BinOpKind::BitAnd => (lhs.as_integer() & rhs.as_integer()).into(),
-                    BinOpKind::BitOr => (lhs.as_integer() | rhs.as_integer()).into(),
-                    BinOpKind::Xor => (lhs.as_integer() ^ rhs.as_integer()).into(),
-                    _ => unreachable!(),
+                        .into()
+                } else {
+                    lhs.as_float().powf(rhs.as_float()).into()
                 }
             }
+            BinOpKind::Eq => apply_cmp_op!(eq, eq),
+            BinOpKind::Ne => apply_cmp_op!(ne, ne),
+            BinOpKind::Lt => apply_cmp_op!(lt, lt),
+            BinOpKind::Le => apply_cmp_op!(le, le),
+            BinOpKind::Gt => apply_cmp_op!(gt, gt),
+            BinOpKind::Ge => apply_cmp_op!(ge, ge),
+            BinOpKind::Shl => lhs
+                .as_integer()
+                .overflowing_shl(rhs.as_integer() as u32)
+                .0
+                .into(),
+            BinOpKind::Shr => lhs
+                .as_integer()
+                .overflowing_shr(rhs.as_integer() as u32)
+                .0
+                .into(),
+            BinOpKind::BitAnd => (lhs.as_integer() & rhs.as_integer()).into(),
+            BinOpKind::BitOr => (lhs.as_integer() | rhs.as_integer()).into(),
+            BinOpKind::Xor => (lhs.as_integer() ^ rhs.as_integer()).into(),
         })
     }
 
