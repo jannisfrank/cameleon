@@ -183,6 +183,11 @@ impl Expr {
             }
             BinOpKind::Or => (self.eval(var_env)?.as_bool() || rhs.eval(var_env)?.as_bool()).into(),
 
+            BinOpKind::Round => {
+                let factor = 10_f64.powi(rhs.eval(var_env)?.as_integer() as i32);
+                ((self.eval(var_env)?.as_float() * factor).round() / factor).into()
+            }
+
             _ => {
                 let lhs = self.eval(var_env)?;
                 let rhs = rhs.eval(var_env)?;
@@ -290,10 +295,6 @@ impl Expr {
             UnOpKind::Trunc => res.as_float().trunc().into(),
             UnOpKind::Floor => res.as_float().floor().into(),
             UnOpKind::Ceil => res.as_float().ceil().into(),
-            UnOpKind::Round(precision) => {
-                let factor = 10_f64.powi(precision);
-                ((res.as_float() * factor).round() / factor).into()
-            }
         })
     }
 }
@@ -319,6 +320,7 @@ pub enum BinOpKind {
     BitAnd,
     BitOr,
     Xor,
+    Round,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -340,7 +342,6 @@ pub enum UnOpKind {
     Trunc,
     Floor,
     Ceil,
-    Round(i32),
 }
 
 #[must_use]
@@ -523,15 +524,16 @@ impl Parser<'_> {
                     "ROUND" => {
                         let expr = self.expr();
                         let precision = if self.eat(&Token::Comma) {
-                            self.next_integer().unwrap()
+                            self.expr()
                         } else {
-                            0
+                            Expr::Integer(0)
                         };
 
                         self.expect(&Token::RParen);
-                        return Expr::UnOp {
-                            kind: UnOpKind::Round(precision as i32),
-                            expr: expr.into(),
+                        return Expr::BinOp {
+                            kind: BinOpKind::Round,
+                            lhs: expr.into(),
+                            rhs: precision.into(),
                         };
                     }
                     other => panic!("{} is not a keyword or function name", other),
@@ -904,6 +906,7 @@ mod tests {
         test_eval_no_var_impl("(0xff00 ^ 0xf0f0) = 0x0ff0");
         test_eval_no_var_impl("(~0) = (0 - 1)");
         test_eval_no_var_impl("ROUND ((1 / 10) + 0.049, 3) = 0.149");
+        test_eval_no_var_impl("ROUND ((1 / 10) + 0.049, 1 + 2) = 0.149");
         test_eval_no_var_impl("ROUND ((1 / 10) + 0.049, 2) = 0.15");
         test_eval_no_var_impl("ROUND ((1 / 10) + 0.049, 1) = 0.1");
         test_eval_no_var_impl("ROUND ((1 / 10) + 0.049, 0) = 0");
